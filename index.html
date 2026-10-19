@@ -202,7 +202,7 @@ body{min-height:100vh;min-height:100dvh}
 <input type="hidden" id="editId">
 <div class="grid">
 <div class="field"><label for="initials">Case reference code</label><input id="initials" placeholder="TEST-01" autocomplete="off" maxlength="40"><p class="hint">Use an invented reference only; no patient initials or chart numbers.</p></div>
-<div class="field"><label for="dob">Date of birth</label><input id="dob" type="text" inputmode="numeric" autocomplete="off" placeholder="YYYY-MM-DD" maxlength="10" aria-describedby="dobHelp"><p class="hint" id="dobHelp">Enter the date as YYYY-MM-DD (e.g., 1990-04-15). Works without the iPhone date picker.</p></div>
+<div class="field"><label for="dob">Date of birth</label><input id="dob" type="date" autocomplete="bday" aria-describedby="dobHelp"><p class="hint" id="dobHelp">Tap to select a date using your phone’s date picker, just like Surgery date.</p></div>
 <div class="field"><label for="date">Surgery date *</label><input id="date" type="date" required></div>
 <div class="field"><label for="attending">Attending *</label><select id="attending" required></select><button type="button" class="secondary" onclick="addAttending()">+ Add attending</button></div>
 <div class="field"><label for="sub">Subspecialty *</label><select id="sub" required onchange="updateOptions()"></select></div>
