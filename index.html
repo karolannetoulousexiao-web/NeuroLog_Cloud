@@ -131,6 +131,28 @@ input,select,textarea{border-radius:10px}
 .brand-logo{display:block;width:56px;height:56px;object-fit:cover;border-radius:14px;flex:none;box-shadow:0 3px 13px #0003}
 @media(max-width:700px){.brand{gap:9px}.brand-logo{width:43px;height:43px;border-radius:11px}.brand h1{font-size:25px}.brand p{max-width:200px}}
 @media(display-mode:standalone){body{overscroll-behavior-y:contain}}
+/* iPhone Home Screen safe-area refinements: preserve notch and home-indicator space. */
+html{min-height:100%;background:var(--bg)}
+body{min-height:100vh;min-height:100dvh}
+@media(max-width:700px){
+  header{
+    padding-top:calc(16px + env(safe-area-inset-top, 0px));
+    padding-left:calc(15px + env(safe-area-inset-left, 0px));
+    padding-right:calc(15px + env(safe-area-inset-right, 0px));
+  }
+  .app-nav{
+    padding-bottom:calc(8px + env(safe-area-inset-bottom, 0px));
+    background:var(--surface);
+    border-radius:17px 17px 0 0;
+  }
+  /* Leave room for the fixed tab bar even on phones with a home indicator. */
+  main{padding-bottom:calc(90px + env(safe-area-inset-bottom, 0px))}
+}
+@supports(padding:max(0px)){
+  @media(max-width:700px){
+    .app-nav{padding-left:max(8px,env(safe-area-inset-left, 0px));padding-right:max(8px,env(safe-area-inset-right, 0px))}
+  }
+}
 </style>
 <link rel="apple-touch-icon" href="./neurolog-apple-icon-v82.png">
 <link rel="apple-touch-icon" sizes="180x180" href="./neurolog-apple-icon-v82.png">
