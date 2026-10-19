@@ -202,7 +202,7 @@ body{min-height:100vh;min-height:100dvh}
 <input type="hidden" id="editId">
 <div class="grid">
 <div class="field"><label for="initials">Case reference code</label><input id="initials" placeholder="TEST-01" autocomplete="off" maxlength="40"><p class="hint">Use an invented reference only; no patient initials or chart numbers.</p></div>
-<div class="field"><label for="dob">Date of birth (unavailable)</label><input id="dob" type="date" disabled><p class="hint">Not collected in this cloud version.</p></div>
+<div class="field"><label for="dob">Date of birth</label><input id="dob" type="text" inputmode="numeric" autocomplete="off" placeholder="YYYY-MM-DD" maxlength="10" aria-describedby="dobHelp"><p class="hint" id="dobHelp">Enter the date as YYYY-MM-DD (e.g., 1990-04-15). Works without the iPhone date picker.</p></div>
 <div class="field"><label for="date">Surgery date *</label><input id="date" type="date" required></div>
 <div class="field"><label for="attending">Attending *</label><select id="attending" required></select><button type="button" class="secondary" onclick="addAttending()">+ Add attending</button></div>
 <div class="field"><label for="sub">Subspecialty *</label><select id="sub" required onchange="updateOptions()"></select></div>
@@ -423,6 +423,7 @@ const id=document.getElementById("editId").value||crypto.randomUUID();
 const item={
 id,
 testCode:document.getElementById("initials").value.trim(),
+dob:document.getElementById("dob").value,
 date:document.getElementById("date").value,
 attending:document.getElementById("attending").value,
 sub,
@@ -436,6 +437,11 @@ detailedProcedure:document.getElementById("detailedProcedure").value.trim(),
 approach:document.getElementById("approach").value,
 complications:document.getElementById("complications").value
 };
+if(item.dob){
+  const match=/^(\d{4})-(\d{2})-(\d{2})$/.exec(item.dob);
+  const valid=match&&Number(match[1])>=1000&&Number(match[1])<=9999&&Number(match[2])>=1&&Number(match[2])<=12&&Number(match[3])>=1&&Number(match[3])<=31&&(()=>{const d=new Date(Date.UTC(+match[1],+match[2]-1,+match[3]));return d.getUTCFullYear()===+match[1]&&d.getUTCMonth()===+match[2]-1&&d.getUTCDate()===+match[3];})();
+  if(!valid){alert("Enter DOB in YYYY-MM-DD format, such as 1990-04-15.");document.getElementById("dob").focus();return;}
+}
 if(!item.date||!item.attending||!item.sub||!item.procedure||!item.role){
 alert("Please complete the required fields.");return;
 }
@@ -460,7 +466,7 @@ const c=cases.find(x=>x.id===id);if(!c)return;
 tab("add");document.getElementById("formTitle").textContent="Edit case";
 document.getElementById("editId").value=c.id;
 document.getElementById("initials").value=c.testCode||"";
-["date"].forEach(k=>document.getElementById(k).value=c[k]||"");
+["dob","date"].forEach(k=>document.getElementById(k).value=c[k]||"");
 document.getElementById("attending").value=c.attending;
 document.getElementById("sub").value=c.sub;updateOptions();
 if((diagnoses[c.sub]||[]).includes(c.diagnosis))document.getElementById("diagnosis").value=c.diagnosis;
@@ -537,8 +543,8 @@ roleProgress(selected);
 document.getElementById('dashboardSummary').textContent=`Showing ${n} of ${cases.length} total cases. EPA percentage counts cases marked Yes; blank or No entries are not counted as logged.`;
 }
 function exportCSV(){
-const headers=["Surgery date","Attending","Subspecialty","Detailed diagnosis","Procedure name","Detailed procedure","Resident role","EPA logged","EPA #","Complications","Surgical approach","Procedure / learning notes"];
-const fields=["date","attending","sub","diagnosis","procedure","detailedProcedure","role","epa","epaNumber","complications","approach","notes"];
+const headers=["Date of birth","Surgery date","Attending","Subspecialty","Detailed diagnosis","Procedure name","Detailed procedure","Resident role","EPA logged","EPA #","Complications","Surgical approach","Procedure / learning notes"];
+const fields=["dob","date","attending","sub","diagnosis","procedure","detailedProcedure","role","epa","epaNumber","complications","approach","notes"];
 const quote=v=>'"'+String(v??"").replace(/"/g,'""')+'"';
 const csv=[headers.map(quote).join(","),...cases.map(c=>fields.map(k=>quote(c[k])).join(","))].join("\r\n");
 const blob=new Blob(["\ufeff"+csv],{type:"text/csv;charset=utf-8"});
@@ -661,7 +667,7 @@ async function cloudSave(item){
  cloudBusy=true;cloudStatus('Saving…');
  try{
   // Strip legacy direct identifiers if any were introduced through code changes.
-  const safeItem={...item};delete safeItem.initials;delete safeItem.dob;
+  const safeItem={...item};delete safeItem.initials;
   const {error}=await cloud.from('cases').upsert({user_id:cloudUser.id,id:item.id,case_data:safeItem,updated_at:new Date().toISOString()},{onConflict:'user_id,id'});
   if(error)throw error;
  }finally{cloudBusy=false;}
