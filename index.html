@@ -261,19 +261,17 @@ body{min-height:100vh;min-height:100dvh}
 <p>Export cases to a spreadsheet-compatible CSV file that opens in Excel.</p>
 <button onclick="exportCSV()">Export CSV for Excel</button>
 <button class="secondary" onclick="backup()">Backup data (JSON)</button>
-<p><small>JSON and CSV exports are available. Import and restore are not enabled in this version.</small></p>
-<hr style="border:0;border-top:1px solid #dde4ee;margin:22px 0">
-<h3>Import unavailable</h3>
-<p>Existing backups cannot be imported into the cloud. This helps prevent accidental uploading of patient-related records.</p>
-<div class="field" hidden><label for="importFile">Select JSON backup</label><input id="importFile" type="file" accept=".json,application/json" onchange="previewImport()"></div>
+<p><small>JSON backups preserve the cases and attending list. Export a backup before importing.</small></p>
+<hr style="border:0;border-top:1px solid var(--line);margin:22px 0">
+<h3>Import JSON backup</h3>
+<p>Import a NeuroLog JSON file into your signed-in account. The default is to merge new cases without changing existing ones.</p>
+<div class="field"><label for="importFile">Select JSON backup</label><input id="importFile" type="file" accept=".json,application/json" onchange="previewImport()"></div>
 <div id="importPreview" class="notice" aria-live="polite">No backup selected.</div>
-<div class="field" hidden><label for="importMode">Import method</label>
-<select id="importMode" onchange="updateImportPreview()">
-<option value="merge">Merge: add new cases and keep existing cases (recommended)</option>
-<option value="replace">Replace: remove current cases and use backup instead</option>
-</select></div>
-<button id="importButton" type="button" onclick="applyImport()" disabled hidden>Import selected backup</button>
-<p><small>Backups containing patient identifiers are sensitive and must not be uploaded without institutional approval.</small></p>
+<div class="field"><label for="importMode">Import method</label><select id="importMode" onchange="updateImportPreview()"><option value="merge">Merge — add missing cases; keep existing cases unchanged</option></select></div>
+<div class="field"><label><input id="importFictional" type="checkbox" style="width:auto;min-height:unset" onchange="updateImportPreview()"> I confirm this file contains only fictional test cases and no real patient information.</label></div>
+<button id="importButton" type="button" onclick="applyImport()" disabled>Import to my cloud account</button>
+<p class="hint" id="importStatus" aria-live="polite"></p>
+<p><small>Do not import actual operative records, even with initials removed, until institutional privacy and security approval is obtained. Exact surgery dates and clinical descriptions may identify patients.</small></p>
 </div>
 </section>
 </div>
@@ -552,83 +550,84 @@ const a=document.createElement("a");a.href=URL.createObjectURL(blob);
 a.download="NeuroLog-v8-cases.csv";a.click();URL.revokeObjectURL(a.href);
 }
 let pendingImport=null;
-function normalizeStaffName(name){
-return name==="Almujuela"||name==="Almuela"?"Almojuela":name;
-}
+function normalizeStaffName(name){return name==="Almujuela"||name==="Almuela"?"Almojuela":name;}
 function validateImport(data){
-if(!data||typeof data!=="object"||Array.isArray(data)||!Array.isArray(data.cases)||!Array.isArray(data.staff))
-throw Error("Not a recognized NeuroLog backup: expected cases and staff arrays.");
-if(data.cases.length>50000)throw Error("This backup is too large for this browser.");
-const ids=new Set();
-const imported=data.cases.map((c,i)=>{
-if(!c||typeof c!=="object"||Array.isArray(c))throw Error("Invalid case at position "+(i+1)+".");
-for(const field of ["id","date","attending","sub","procedure","role"]){
-if(typeof c[field]!=="string"||!c[field].trim())throw Error("Case "+(i+1)+" is missing "+field+".");
-}
-if(ids.has(c.id))throw Error("Backup has duplicate case IDs: "+c.id);
-ids.add(c.id);
-for(const [k,v] of Object.entries(c)){
-if(v!==null&&typeof v!=="string")throw Error("Unexpected field type for "+k+" in case "+(i+1)+".");
-}
-return {...c,attending:normalizeStaffName(c.attending)};
-});
-const importedStaff=data.staff.map((name,i)=>{
-if(typeof name!=="string"||!name.trim())throw Error("Invalid attending at position "+(i+1)+".");
-return normalizeStaffName(name.trim());
-});
-return {cases:imported,staff:importedStaff};
+ if(!data||typeof data!=="object"||Array.isArray(data)||!Array.isArray(data.cases)||!Array.isArray(data.staff))
+   throw Error("Not a recognized NeuroLog backup: expected cases and staff arrays.");
+ if(data.cases.length>5000)throw Error("Import limit is 5,000 cases per file.");
+ const ids=new Set();
+ const imported=data.cases.map((c,i)=>{
+   if(!c||typeof c!=="object"||Array.isArray(c))throw Error("Invalid case at position "+(i+1));
+   for(const field of ["id","date","attending","sub","procedure","role"]){
+     if(typeof c[field]!=="string"||!c[field].trim())throw Error("Case "+(i+1)+" is missing "+field);
+   }
+   if(ids.has(c.id))throw Error("Duplicate case ID in file: "+c.id);
+   ids.add(c.id);
+   if(!subs.includes(c.sub))throw Error("Unrecognized subspecialty at case "+(i+1)+": "+c.sub);
+   if(!/^\d{4}-\d{2}-\d{2}$/.test(c.date))throw Error("Invalid surgery date at case "+(i+1));
+   for(const [k,v] of Object.entries(c))if(v!==null&&typeof v!=="string")throw Error("Invalid field "+k+" at case "+(i+1));
+   // Whitelist the fields NeuroLog understands; do not transfer legacy initials.
+   const keys=["id","testCode","dob","date","attending","sub","diagnosis","procedure","role","epa","epaNumber","notes","detailedProcedure","approach","complications"];
+   const clean=Object.fromEntries(keys.map(k=>[k,typeof c[k]==="string"?c[k]:""]));
+   clean.attending=normalizeStaffName(clean.attending);
+   return clean;
+ });
+ const importedStaff=data.staff.map((name,i)=>{
+   if(typeof name!=="string"||!name.trim())throw Error("Invalid attending at position "+(i+1));
+   return normalizeStaffName(name.trim());
+ });
+ return {cases:imported,staff:importedStaff};
 }
 async function previewImport(){
-const el=document.getElementById("importFile");
-pendingImport=null;
-document.getElementById("importButton").disabled=true;
-if(!el.files.length){updateImportPreview();return;}
-try{
-const file=el.files[0];
-if(file.size>20*1024*1024)throw Error("File exceeds the 20 MB import limit.");
-const parsed=JSON.parse(await file.text());
-pendingImport=validateImport(parsed);
-updateImportPreview();
-}catch(err){
-document.getElementById("importPreview").textContent="Import not available: "+err.message;
-}
+ pendingImport=null;
+ const file=document.getElementById("importFile").files[0];
+ if(!file){updateImportPreview();return;}
+ try{
+   if(file.size>20*1024*1024)throw Error("File exceeds the 20 MB import limit.");
+   pendingImport=validateImport(JSON.parse(await file.text()));
+   updateImportPreview();
+ }catch(err){document.getElementById("importPreview").textContent="Cannot import: "+err.message;document.getElementById("importButton").disabled=true;}
 }
 function updateImportPreview(){
-const preview=document.getElementById("importPreview");
-const button=document.getElementById("importButton");
-button.disabled=!pendingImport;
-if(!pendingImport){preview.textContent="No valid backup selected.";return;}
-const existing=new Set(cases.map(c=>c.id));
-const duplicates=pendingImport.cases.filter(c=>existing.has(c.id)).length;
-const mode=document.getElementById("importMode").value;
-preview.textContent=`Backup contains ${pendingImport.cases.length} cases and ${pendingImport.staff.length} attending entries. Current log: ${cases.length} cases. ${duplicates} case IDs already exist. `+
-(mode==="merge"?`Merge will add ${pendingImport.cases.length-duplicates} new cases; existing cases with matching IDs stay unchanged.`:`Replace will overwrite all ${cases.length} current cases with the ${pendingImport.cases.length} backup cases.`);
+ const preview=document.getElementById("importPreview"),button=document.getElementById("importButton");
+ button.disabled=!pendingImport||!cloudUser||!document.getElementById("importFictional").checked;
+ if(!pendingImport){preview.textContent="No valid backup selected.";return;}
+ const existing=new Set(cases.map(c=>c.id));
+ const duplicates=pendingImport.cases.filter(c=>existing.has(c.id)).length;
+ preview.textContent=`File: ${pendingImport.cases.length} cases, ${pendingImport.staff.length} attendings. Already in your cloud log: ${duplicates} matching IDs. New cases to add: ${pendingImport.cases.length-duplicates}. Existing cases will not be changed.`;
 }
-function applyImport(){
-alert("Import is not available in this version."); return;
-if(!pendingImport)return;
-const mode=document.getElementById("importMode").value;
-const message=mode==="replace"?
-"REPLACE all current cases with this backup? This cannot be undone unless you have a separate backup.":
-"Merge backup cases into the current log? Existing case IDs will be kept unchanged.";
-if(!confirm(message))return;
-const priorCases=cases,priorStaff=staff;
-try{
-const existing=new Set(cases.map(c=>c.id));
-cases=mode==="replace"?[...pendingImport.cases]:[...cases,...pendingImport.cases.filter(c=>!existing.has(c.id))];
-staff=[...new Set([...staffDefault,...(mode==="replace"?[]:staff),...pendingImport.staff,...cases.map(c=>c.attending)])];
-persist();
-fill("attending",staff,"Select attending");
-render();stats();resetForm();
-const count=cases.length;
-pendingImport=null;
-document.getElementById("importFile").value="";
-updateImportPreview();
-alert("Import complete. Your log now has "+count+" cases. Download a new JSON backup to preserve the result.");
-}catch(err){
-cases=priorCases;staff=priorStaff;
-alert("Import failed; your current data was left unchanged. "+err.message);
-}
+async function applyImport(){
+ if(!pendingImport||!cloudUser||!document.getElementById("importFictional").checked)return;
+ if(!navigator.onLine){alert("Connect to the internet before importing.");return;}
+ const userId=cloudUser.id;
+ const existing=new Set(cases.map(c=>c.id));
+ const fresh=pendingImport.cases.filter(c=>!existing.has(c.id));
+ if(!fresh.length){alert("No new cases to import.");return;}
+ if(!confirm(`Add ${fresh.length} fictional cases to your cloud account? Existing cases will be kept.`))return;
+ const button=document.getElementById("importButton"),status=document.getElementById("importStatus");
+ button.disabled=true;
+ let done=0;
+ try{
+   // Upsert in small batches; on failure, report partial progress rather than claiming a rollback.
+   // Never overwrite an existing record: use insert and skip unique-ID conflicts.
+   for(let i=0;i<fresh.length;i+=25){
+     if(!cloudUser||cloudUser.id!==userId)throw Error("Account changed during import.");
+     const batch=fresh.slice(i,i+25).map(c=>({user_id:userId,id:c.id,case_data:c}));
+     const {error}=await cloud.from('cases').upsert(batch,{onConflict:'user_id,id',ignoreDuplicates:true});
+     if(error)throw error;
+     done+=batch.length;
+     status.textContent=`Uploaded ${done} of ${fresh.length} new cases…`;
+   }
+   status.textContent=`Import completed: ${done} cases uploaded. Refreshing log…`;
+   pendingImport=null;
+   document.getElementById("importFile").value="";
+   document.getElementById("importFictional").checked=false;
+   await cloudFetch();updateImportPreview();
+   status.textContent=`Import completed: ${done} cases uploaded to your account.`;
+ }catch(err){
+   status.textContent=`Import stopped after ${done} uploaded cases. Some cases may have been saved. ${err.message} Refresh before retrying.`;
+   await cloudFetch();updateImportPreview();
+ }
 }
 function backup(){
 const blob=new Blob([JSON.stringify({cases,staff},null,2)],{type:"application/json"});
