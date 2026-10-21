@@ -270,8 +270,10 @@ body{min-height:100vh;min-height:100dvh}
 <section id="export" class="panel">
 <div class="card"><h2>Export logbook</h2>
 <p class="hint">Export a copy of your current cloud logbook. Existing local backups are not automatically uploaded.</p>
-<p>Export cases to a spreadsheet-compatible CSV file that opens in Excel.</p>
-<button onclick="exportCSV()">Export CSV for Excel</button>
+<p>Download an Excel workbook with your operative cases and a second worksheet summarizing your operative experience.</p>
+<div class="field" style="max-width:420px"><label for="exportScope">Cases to export</label><select id="exportScope"><option value="all">All saved cases</option><option value="filtered">Only cases matching the current Cases filters</option></select></div>
+<button type="button" onclick="exportExcel()">Download Excel workbook (.xlsx)</button>
+<p class="hint">Filtered export uses the filters and sorting in the Cases tab. The Dashboard worksheet summarizes exactly the cases included in this export.</p>
 <button class="secondary" onclick="backup()">Backup data (JSON)</button>
 <p><small>JSON backups preserve the cases and attending list. Export a backup before importing.</small></p>
 <hr style="border:0;border-top:1px solid var(--line);margin:22px 0">
@@ -577,14 +579,88 @@ barChart('roleStats',countsBy(selected,'role'));
 roleProgress(selected);
 document.getElementById('dashboardSummary').textContent=`Showing ${n} of ${cases.length} total cases. EPA percentage counts cases marked Yes; blank or No entries are not counted as logged.`;
 }
-function exportCSV(){
-const headers=["Date of birth","Surgery date","Attending","Subspecialty","Detailed diagnosis","Procedure name","Detailed procedure","Resident role","EPA logged","EPA #","Complications","Surgical approach","Procedure / learning notes"];
-const fields=["dob","date","attending","sub","diagnosis","procedure","detailedProcedure","role","epa","epaNumber","complications","approach","notes"];
-const quote=v=>'"'+String(v??"").replace(/"/g,'""')+'"';
-const csv=[headers.map(quote).join(","),...cases.map(c=>fields.map(k=>quote(c[k])).join(","))].join("\r\n");
-const blob=new Blob(["\ufeff"+csv],{type:"text/csv;charset=utf-8"});
-const a=document.createElement("a");a.href=URL.createObjectURL(blob);
-a.download="NeuroLog-v8-cases.csv";a.click();URL.revokeObjectURL(a.href);
+// Export is generated locally; no spreadsheet data is sent to a third-party service.
+function getExportCases(){
+  if(document.getElementById('exportScope').value!=='filtered')return [...cases].sort((a,b)=>String(b.date||'').localeCompare(String(a.date||'')));
+  const val=id=>document.getElementById(id).value;
+  const q=val('search').toLowerCase().trim(),from=val('caseFrom'),to=val('caseTo');
+  const sub=val('caseSub'),dx=val('caseDiagnosis'),proc=val('caseProcedure'),att=val('caseAttending'),role=val('caseRole');
+  const result=cases.filter(c=>(!q||JSON.stringify(c).toLowerCase().includes(q))&&(!from||(c.date||'')>=from)&&(!to||(c.date||'')<=to)&&(!sub||c.sub===sub)&&(!dx||c.diagnosis===dx)&&(!proc||c.procedure===proc)&&(!att||c.attending===att)&&(!role||c.role===role));
+  const [field,direction]=val('caseSort').split('-');
+  result.sort((a,b)=>{const x=String(a[field]||''),y=String(b[field]||'');const cmp=field==='date'?x.localeCompare(y):x.localeCompare(y,undefined,{sensitivity:'base',numeric:true});return (direction==='desc'?-1:1)*cmp||String(a.id).localeCompare(String(b.id));});
+  return result;
+}
+function excelColumns(){return [
+  ['Case reference','testCode'],['Patient initials (legacy)','initials'],['Date of birth','dob'],['Surgery date','date'],
+  ['Attending','attending'],['Subspecialty','sub'],['Detailed diagnosis','diagnosis'],['Procedure name','procedure'],
+  ['Detailed procedure','detailedProcedure'],['Resident role','role'],['EPA logged','epa'],['EPA #','epaNumber'],
+  ['Complications','complications'],['Surgical approach','approach'],['Procedure / learning notes','notes']
+];}
+function dashboardExportRows(list,scope){
+  const n=list.length,main=list.filter(c=>c.role==='Main surgeon').length,epa=list.filter(c=>c.epa==='Yes').length;
+  const rows=[['NeuroLog — Operative Dashboard'],['Export scope',scope==='filtered'?'Cases filters':'All saved cases'],['Cases included',n],['Main surgeon cases',main],['Main surgeon share',n?Math.round(main/n*100)+'%':'0%'],['EPA logged',epa],['EPA logged share',n?Math.round(epa/n*100)+'%':'0%'],[],['Subspecialty','Cases']];
+  const addCounts=(heading,entries)=>{rows.push([], [heading,'Cases']);entries.forEach(([name,count])=>rows.push([name,count]));};
+  countsBy(list,'sub').forEach(x=>rows.push(x));
+  addCounts('Diagnosis',countsBy(list,'diagnosis'));
+  addCounts('Procedure',countsBy(list,'procedure'));
+  addCounts('Attending',countsBy(list,'attending'));
+  addCounts('Resident role',countsBy(list,'role'));
+  const months=new Map();list.forEach(c=>{const k=monthKey(c.date);if(k)months.set(k,(months.get(k)||0)+1);});
+  addCounts('Monthly operative volume',[...months.entries()].sort((a,b)=>a[0].localeCompare(b[0])));
+  const roles=['Main surgeon','First assist','Second assist','Observer'];
+  rows.push([],['Role progression by month',...roles,'Other','Total']);
+  [...new Set(list.map(c=>monthKey(c.date)).filter(Boolean))].sort().forEach(m=>{
+    const group=list.filter(c=>monthKey(c.date)===m);
+    rows.push([m,...roles.map(r=>group.filter(c=>c.role===r).length),group.filter(c=>!roles.includes(c.role)).length,group.length]);
+  });
+  return rows;
+}
+// Minimal standards-compliant XLSX (OOXML ZIP), generated in the browser without external libraries.
+function makeXlsx(sheets){
+  const enc=new TextEncoder(),xml=s=>String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&apos;');
+  const col=i=>{let out='';for(i++;i;i=Math.floor((i-1)/26))out=String.fromCharCode(65+(i-1)%26)+out;return out;};
+  const sheetXml=(rows)=>{
+    const body=rows.map((row,r)=>'<row r="'+(r+1)+'">'+row.map((v,c)=>{
+      if(v===null||v===undefined||v==='')return '';
+      const ref=col(c)+(r+1);
+      if(typeof v==='number'&&Number.isFinite(v))return '<c r="'+ref+'"><v>'+v+'</v></c>';
+      // Inline strings prevent spreadsheet formula injection from free-text clinical fields.
+      return '<c r="'+ref+'" t="inlineStr"><is><t xml:space="preserve">'+xml(v)+'</t></is></c>';
+    }).join('')+'</row>').join('');
+    return '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetViews><sheetView workbookViewId="0"/></sheetViews><sheetFormatPr defaultRowHeight="15"/><sheetData>'+body+'</sheetData></worksheet>';
+  };
+  const files={
+    '[Content_Types].xml':'<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>'+sheets.map((_,i)=>'<Override PartName="/xl/worksheets/sheet'+(i+1)+'.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>').join('')+'</Types>',
+    '_rels/.rels':'<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>',
+    'xl/workbook.xml':'<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets>'+sheets.map(([name],i)=>'<sheet name="'+xml(name)+'" sheetId="'+(i+1)+'" r:id="rId'+(i+1)+'"/>').join('')+'</sheets></workbook>',
+    'xl/_rels/workbook.xml.rels':'<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'+sheets.map((_,i)=>'<Relationship Id="rId'+(i+1)+'" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet'+(i+1)+'.xml"/>').join('')+'</Relationships>'
+  };
+  sheets.forEach(([,rows],i)=>files['xl/worksheets/sheet'+(i+1)+'.xml']=sheetXml(rows));
+  const crcTable=new Uint32Array(256);for(let n=0;n<256;n++){let c=n;for(let k=0;k<8;k++)c=(c&1)?0xEDB88320^(c>>>1):c>>>1;crcTable[n]=c>>>0;}
+  const crc32=bytes=>{let c=0xFFFFFFFF;for(const b of bytes)c=crcTable[(c^b)&255]^(c>>>8);return (c^0xFFFFFFFF)>>>0;};
+  const u16=n=>[n&255,(n>>>8)&255],u32=n=>[n&255,(n>>>8)&255,(n>>>16)&255,(n>>>24)&255];
+  const chunks=[],central=[];let offset=0;
+  for(const [path,content] of Object.entries(files)){
+    const name=enc.encode(path),data=enc.encode(content),crc=crc32(data);
+    const local=new Uint8Array([...u32(0x04034b50),...u16(20),...u16(0x0800),...u16(0),...u16(0),...u16(0),...u32(crc),...u32(data.length),...u32(data.length),...u16(name.length),...u16(0),...name]);
+    chunks.push(local,data);
+    central.push(new Uint8Array([...u32(0x02014b50),...u16(20),...u16(20),...u16(0x0800),...u16(0),...u16(0),...u16(0),...u32(crc),...u32(data.length),...u32(data.length),...u16(name.length),...u16(0),...u16(0),...u16(0),...u16(0),...u32(0),...u32(offset),...name]));
+    offset+=local.length+data.length;
+  }
+  const centralSize=central.reduce((n,c)=>n+c.length,0);
+  chunks.push(...central,new Uint8Array([...u32(0x06054b50),...u16(0),...u16(0),...u16(central.length),...u16(central.length),...u32(centralSize),...u32(offset),...u16(0)]));
+  return new Blob(chunks,{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
+}
+function exportExcel(){
+  try{
+    const selected=getExportCases(),columns=excelColumns();
+    const rows=[columns.map(([label])=>label),...selected.map(c=>columns.map(([,field])=>String(c[field]??'')))];
+    const scope=document.getElementById('exportScope').value;
+    const blob=makeXlsx([['Cases',rows],['Dashboard',dashboardExportRows(selected,scope)]]);
+    const url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;
+    a.download='NeuroLog-'+(scope==='filtered'?'filtered-':'')+'export-'+new Date().toISOString().slice(0,10)+'.xlsx';a.click();
+    setTimeout(()=>URL.revokeObjectURL(url),60000);
+  }catch(err){alert('Excel export failed: '+err.message);}
 }
 let pendingImport=null;
 function normalizeStaffName(name){return name==="Almujuela"||name==="Almuela"?"Almojuela":name;}
