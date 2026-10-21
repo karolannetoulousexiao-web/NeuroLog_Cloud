@@ -184,7 +184,19 @@ body{min-height:100vh;min-height:100dvh}
 <section id="log" class="panel">
 <div class="card">
 <h2>My cases</h2>
-<input id="search" placeholder="Search cases..." oninput="render()">
+<input id="search" placeholder="Search cases..." oninput="render()" aria-label="Search all case fields">
+<div class="grid" style="margin:14px 0" aria-label="Case filters">
+<div class="field"><label for="caseFrom">Surgery date from</label><input id="caseFrom" type="date" onchange="render()"></div>
+<div class="field"><label for="caseTo">Surgery date to</label><input id="caseTo" type="date" onchange="render()"></div>
+<div class="field"><label for="caseSub">Subspecialty</label><select id="caseSub" onchange="updateCaseFilterChoices();render()"><option value="">All subspecialties</option></select></div>
+<div class="field"><label for="caseDiagnosis">Diagnosis</label><select id="caseDiagnosis" onchange="render()"><option value="">All diagnoses</option></select></div>
+<div class="field"><label for="caseProcedure">Procedure</label><select id="caseProcedure" onchange="render()"><option value="">All procedures</option></select></div>
+<div class="field"><label for="caseAttending">Attending</label><select id="caseAttending" onchange="render()"><option value="">All attendings</option></select></div>
+<div class="field"><label for="caseRole">Resident role</label><select id="caseRole" onchange="render()"><option value="">All roles</option></select></div>
+<div class="field"><label for="caseSort">Sort cases by</label><select id="caseSort" onchange="render()"><option value="date-desc">Surgery date (newest first)</option><option value="date-asc">Surgery date (oldest first)</option><option value="sub-asc">Subspecialty (A–Z)</option><option value="sub-desc">Subspecialty (Z–A)</option><option value="diagnosis-asc">Diagnosis (A–Z)</option><option value="diagnosis-desc">Diagnosis (Z–A)</option><option value="procedure-asc">Procedure (A–Z)</option><option value="procedure-desc">Procedure (Z–A)</option><option value="attending-asc">Attending (A–Z)</option><option value="attending-desc">Attending (Z–A)</option><option value="role-asc">Role (A–Z)</option><option value="role-desc">Role (Z–A)</option></select></div>
+</div>
+<button class="secondary" type="button" onclick="clearCaseFilters()">Clear filters</button>
+<p class="hint" id="caseResultCount" aria-live="polite"></p>
 <div class="tablewrap">
 <table>
 <thead><tr><th>Date</th><th>Subspecialty</th><th>Diagnosis</th><th>Procedure</th><th>Attending</th><th>Role</th><th>EPA</th><th></th></tr></thead>
@@ -304,20 +316,21 @@ try{
 
 const staffDefault=[
 "Abdul Salam","Kaufmann","Silvaggio","Berrington","Almojuela",
-"Galdino","Dhaliwal","Beiko","McDonald","Drapeau","Kazina"
+"Galdino","Dhaliwal","Beiko","McDonald","Drapeau","Kazina","Fomenko"
 ];
 
 const subs=[
 "Brain trauma","Spine trauma","Oncology","Elective spine",
-"Vascular","Pediatric","Functional","EVD / LD","General","Other"
+"Vascular","IR","Pediatric","Functional","EVD / LD","General","Other"
 ];
 
 const diagnoses={
 "Brain trauma":["aSDH","EDH","ICH","IVH","Skull fracture","Penetrating cranial injury","Other"],
 "Spine trauma":["C-spine fracture","T-spine fracture","L-spine fracture","Odontoid fracture","Hangman fracture","Traumatic spinal cord compression","SCI","Cauda equina","Facet dislocation/subluxation","Spondylolisthesis","Spinal epidural hematoma","Other"],
-"Oncology":["Meningioma","GBM","Astrocytoma","Ependymoma","Glioma","Oligodendroglioma","Lymphoma","Pituitary adenoma","Craniopharyngioma","Epidermoid/dermoid cyst","Schwannoma","Metastasis","Other"],
+"Oncology":["Meningioma","GBM","Astrocytoma","Ependymoma","Glioma","Oligodendroglioma","Lymphoma","Pituitary adenoma","Craniopharyngioma","Epidermoid/dermoid cyst","Schwannoma","Metastasis","Brain lesion NYD","Other"],
 "Elective spine":["Cervical myelopathy","Cervical radiculopathy","Lumbar stenosis","Lumbar radiculopathy","DDD","Cervical disc herniation","Lumbar disc herniation","Spinal deformity","Spinal instability","Spinal tumor","Other"],
 "Vascular":["Aneurysm","Vascular malformation","Carotid stenosis","Trigeminal neuralgia","Hemifacial spasm","Other"],
+"IR":["Carotid stenosis","Vascular malformation","Aneurysm","Stroke","Diagnostic testing","AVM","dAVF","Moya moya","cSDH","Other"],
 "Pediatric":["Hydrocephalus","Craniosynostosis","Chiari malformation","Trauma","Tumor","Other"],
 "Functional":["Parkinson disease","Essential tremor","Dystonia","Epilepsy","Pain","Other"],
 "General":["NPH","Hydrocephalus","Shunt malfunction","CSF leak","cSDH","Abscess/infection","Postoperative wound infection/dehiscence","Cranioplasty","Other"],
@@ -331,6 +344,7 @@ const procedures={
 "Oncology":["Craniotomy for tumor debulking/resection","Stereotactic brain biopsy","Open brain biopsy","Endoscopic endonasal/TSS tumor resection","Other"],
 "Elective spine":["ACDF","PCDF","TLIF","Lumbar laminectomy","Lumbar microdiscectomy","PLIF","ALIF","Spinal deformity correction/fusion","Revision of construct","Removal of hardware","Perc fusion","Thoracic fusion","Other"],
 "Vascular":["Aneurysm clipping","AVM resection","dAVF disconnection","Cavernoma resection","Carotid endarterectomy","EC-IC bypass","MVD","Other"],
+"IR":["DSA","Stent","Coil","WEB","Flow diverter","EMMA","EVT","Other"],
 "Pediatric":["VPS insertion","VPS revision","ETV ± CPC","EVD","Myelomeningocele repair","Craniosynostosis repair","Craniotomy for tumor resection","Other"],
 "Functional":["DBS","VNS","Temporal lobectomy","Callosotomy","Baclofen pump insertion/change","Battery change","Other"],
 "EVD / LD":["EVD","LD"],
@@ -448,9 +462,32 @@ try { await cloudSave(item); resetForm();tab("log"); }
 catch(err){ alert("Cloud save failed. Case was not saved: "+err.message); }
 });
 function safe(v){return String(v??"").replace(/[&<>"']/g,ch=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[ch]));}
+function updateCaseFilterChoices(){
+  const selectedSub=document.getElementById('caseSub').value;
+  const relevant=selectedSub?cases.filter(c=>c.sub===selectedSub):cases;
+  const options=[['caseSub','sub',cases,'All subspecialties'],['caseDiagnosis','diagnosis',relevant,'All diagnoses'],['caseProcedure','procedure',relevant,'All procedures'],['caseAttending','attending',relevant,'All attendings'],['caseRole','role',relevant,'All roles']];
+  options.forEach(([id,field,source,placeholder])=>{
+    const el=document.getElementById(id);const prior=el.value;
+    const values=[...new Set(source.map(c=>String(c[field]||'').trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b));
+    el.innerHTML='<option value="">'+placeholder+'</option>'+values.map(v=>'<option value="'+safe(v)+'">'+safe(v)+'</option>').join('');
+    if(values.includes(prior))el.value=prior;
+  });
+}
+function clearCaseFilters(){
+  ['search','caseFrom','caseTo','caseSub','caseDiagnosis','caseProcedure','caseAttending','caseRole'].forEach(id=>document.getElementById(id).value='');
+  document.getElementById('caseSort').value='date-desc';updateCaseFilterChoices();render();
+}
 function render(){
-const q=document.getElementById("search").value.toLowerCase();
-const filtered=cases.filter(c=>JSON.stringify(c).toLowerCase().includes(q));
+updateCaseFilterChoices();
+const q=document.getElementById('search').value.toLowerCase().trim();
+const from=document.getElementById('caseFrom').value,to=document.getElementById('caseTo').value;
+const sub=document.getElementById('caseSub').value,diagnosis=document.getElementById('caseDiagnosis').value;
+const procedure=document.getElementById('caseProcedure').value,attending=document.getElementById('caseAttending').value,role=document.getElementById('caseRole').value;
+const filtered=cases.filter(c=>(!q||JSON.stringify(c).toLowerCase().includes(q))&&(!from||(c.date||'')>=from)&&(!to||(c.date||'')<=to)&&(!sub||c.sub===sub)&&(!diagnosis||c.diagnosis===diagnosis)&&(!procedure||c.procedure===procedure)&&(!attending||c.attending===attending)&&(!role||c.role===role));
+const sort=document.getElementById('caseSort').value;
+const [field,direction]=sort.split('-');
+filtered.sort((a,b)=>{const x=String(a[field]||''),y=String(b[field]||'');const cmp=field==='date'?x.localeCompare(y):x.localeCompare(y,undefined,{sensitivity:'base',numeric:true});return (direction==='desc'?-1:1)*cmp||String(a.id).localeCompare(String(b.id));});
+document.getElementById('caseResultCount').textContent=`Showing ${filtered.length} of ${cases.length} cases`;
 document.getElementById("rows").innerHTML=filtered.map(c=>`<tr>
 <td>${safe(c.date||"")}</td><td>${safe(c.sub)}</td><td>${safe(c.diagnosis||"—")}</td>
 <td>${safe(c.procedure)}</td><td>${safe(c.attending)}</td><td>${safe(c.role)}</td>
@@ -654,8 +691,16 @@ async function cloudFetch(){
   const {data,error}=await cloud.from('cases').select('id,case_data').eq('user_id',cloudUser.id).order('updated_at',{ascending:false});
   if(error)throw error;
   cases=(data||[]).map(row=>({...row.case_data,id:row.id}));
-  staff=[...new Set([...staffDefault,...cases.map(c=>c.attending).filter(Boolean)])];
-  fill('attending',staff,'Select attending');render();stats();
+  // Preserve an in-progress form selection during background cloud synchronization.
+  const attendingSelect=document.getElementById('attending');
+  const selectedAttending=attendingSelect.value;
+  staff=[...new Set([...staffDefault,...staff,...cases.map(c=>c.attending).filter(Boolean),...(selectedAttending?[selectedAttending]:[])])];
+  const currentOptions=Array.from(attendingSelect.options).slice(1).map(o=>o.value);
+  if(currentOptions.length!==staff.length || currentOptions.some((value,i)=>value!==staff[i])){
+    fill('attending',staff,'Select attending');
+    attendingSelect.value=selectedAttending;
+  }
+  render();stats();
   cloudStatus('Synced · '+new Date().toLocaleTimeString());
  }catch(err){cloudStatus('Sync failed · '+err.message);}
  finally{cloudBusy=false;}
